@@ -1,0 +1,157 @@
+#!/bin/bash
+
+# Ensure hook is installed
+if [ -f infra/git/hooks/pre-commit ] ; then
+    cmp -s infra/git/hooks/pre-commit .git/hooks/pre-commit
+    if [ "$?" -ne 0 ] ; then
+        echo "Installing/Updating git hook"
+        cp infra/git/hooks/pre-commit .git/hooks/
+        chmod +x .git/hooks/pre-commit
+    fi
+fi
+
+# Docker variables
+ORIGIN_PWD=$(pwd)
+DOCKER_PWD='infra/docker'
+DOCKER_PROJECT='app'
+DOCKER_CONTAINER_DB='db'
+DOCKER_CONTAINER_PHP='php'
+DOCKER_CONTAINER_WEB='web'
+
+source $(dirname $0)/.conf
+
+docker_build() {
+    EXTRA_PARAMS=''
+    if [ "$1" == "no-cache" ] ; then
+        EXTRA_PARAMS='--no-cache'
+    fi
+
+    cd $DOCKER_PWD
+
+    docker-compose build --pull $EXTRA_PARAMS
+
+    cd $ORIGIN_PWD
+}
+
+docker_up() {
+    cd $DOCKER_PWD
+
+    docker-compose -p $DOCKER_PROJECT up -d
+
+    cd $ORIGIN_PWD
+}
+
+docker_down() {
+    cd $DOCKER_PWD
+
+    docker-compose -p $DOCKER_PROJECT down
+
+    cd $ORIGIN_PWD
+}
+
+docker_restart() {
+    cd $DOCKER_PWD
+
+    docker-compose -p $DOCKER_PROJECT down
+    docker-compose -p $DOCKER_PROJECT up -d
+
+    cd $ORIGIN_PWD
+}
+
+docker_db() {
+    docker exec -it $DOCKER_CONTAINER_DB mysql $1
+}
+
+docker_db_load() {
+    docker exec -i $DOCKER_CONTAINER_DB mysql $1
+}
+
+docker_php() {
+    EXTRA_PARAMS="$@"
+    if [ -z "$1" ] ; then
+        EXTRA_PARAMS='bash'
+    fi
+
+    docker exec -it $DOCKER_CONTAINER_PHP $EXTRA_PARAMS
+}
+
+docker_php_cs() {
+    docker exec -i $DOCKER_CONTAINER_PHP phpcs $1
+}
+
+docker_php_lint() {
+    docker exec -i $DOCKER_CONTAINER_PHP php -l $1
+}
+
+docker_web() {
+    docker exec -it $DOCKER_CONTAINER_WEB bash
+}
+
+install_ca() {
+    curl https://cdn.acilia.es/rootCA.crt --output rootCA.crt
+    sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain rootCA.crt
+    rm rootCA.crt
+}
+
+case $1 in
+    "build")
+        docker_build $2
+    ;;
+
+    "up")
+        docker_up
+    ;;
+
+    "down")
+        docker_down
+    ;;
+
+    "restart")
+        docker_restart
+    ;;
+
+    "db")
+        docker_db $2
+    ;;
+
+    "db-load")
+        docker_db_load $2
+    ;;
+
+    "php")
+        docker_php ${@:2}
+    ;;
+
+    "php_cs")
+        docker_php_cs ${@:2}
+    ;;
+
+    "php_lint")
+        docker_php_lint ${@:2}
+    ;;
+
+    "web")
+        docker_web
+    ;;
+
+    "install-ca")
+        install_ca
+    ;;
+
+    "prepare-tests")
+        echo "Regenerating DB"
+        docker exec -i $DOCKER_CONTAINER_DB mysql -e "DROP DATABASE ticket"
+        docker exec -i $DOCKER_CONTAINER_DB mysql -e "CREATE DATABASE IF NOT EXISTS ticket"
+        docker exec -i $DOCKER_CONTAINER_DB mysql -e "GRANT ALL ON ticket.* TO 'ticket'@'%' IDENTIFIED BY 'ticket'"
+        docker_php bin/console doctrine:schema:create
+        echo "Loading fixtures"
+        docker_php bin/console hautelook:fixtures:load -n
+        docker_php bin/console app:payment:routing-number
+        echo "Cleaning test cache"
+        docker_php bin/console c:c --env=test
+        echo "Done"
+    ;;
+
+esac
+
+exit 0

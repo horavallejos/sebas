@@ -1,0 +1,58 @@
+version: '2'
+
+services:
+    apache:
+        build: ./apache
+        container_name: ticket-api-apache
+        image: ticket-api-apache
+        ports:
+            - ${APP_PORT}:80
+            - ${APP_PORT_SECURE}:443
+        links:
+            - db
+            - mailer
+            - redis
+        volumes:
+            - ${APP_DIR}:/home/app
+        network_mode: bridge
+
+    cli:
+        build: ./cli
+        container_name: ticket-api-cli
+        image: ticket-api-cli
+        links:
+            - db
+            - redis
+            - mailer
+        volumes:
+            - ${APP_DIR}:/home/app
+        network_mode: bridge
+
+    db:
+        build: ./dbserver
+        container_name: ticket-api-db
+        image: ticket-api-db
+        ports:
+         - ${DB_PORT}:3306
+        volumes:
+            - ${APP_DB}:/var/lib/mysql
+        environment:
+            MYSQL_ALLOW_EMPTY_PASSWORD: 1
+        network_mode: bridge
+
+    redis:
+        container_name: ticket-api-redis
+        image: redis:6.2
+        network_mode: bridge
+
+    mailer:
+        build: ./mailer
+        container_name: ticket-api-mailer
+        image: ticket-api-mailer
+        ports:
+            - ${MAILER_PORT}:80
+        environment:
+            - MAILCATCHER_HTTP_PORT=80
+            - MAILCATCHER_SMTP_PORT=25
+            - MAILCATCHER_PATH=/mailcatcher/
+        network_mode: bridge
